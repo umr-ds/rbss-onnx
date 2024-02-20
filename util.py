@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import numpy as np
 from PIL import Image
 import torch
@@ -9,6 +11,10 @@ from ultralytics.data.loaders import LoadPilAndNumpy
 from ultralytics.engine.results import Results
 # from ultralytics.models.fastsam import FastSAMPrompt
 from ultralytics.utils import ops
+
+from configs.config import HashingConfig
+
+config = HashingConfig(yaml_path="configs/256bit.yaml")
 
 
 def default_image_loader(path):
@@ -292,6 +298,47 @@ class FastSAMPrompt:
         return self.results[0].masks.data
 
 
+def get_context_box(image, box, small_box_area, medium_box_area, context_crop_factor_small,
+                    context_crop_factor_medium) -> Tuple:
+    x1, y1, x2, y2 = box
+    box_w = x2 - x1
+    box_h = y2 - y1
+    image_w, image_h = image.size
+
+    # Resize crop box
+    box_x_center = x1 + (x2 - x1) / 2
+    box_y_center = y1 + (y2 - y1) / 2
+    if box_w * box_h <= small_box_area:
+        scale_factor = context_crop_factor_small
+    elif box_w * box_h <= medium_box_area:
+        scale_factor = context_crop_factor_medium
+    x1_new = max(0, box_x_center - 0.5 * box_w * scale_factor)
+    x2_new = min(image_w, box_x_center + 0.5 * box_w * scale_factor)
+    y1_new = max(0, box_y_center - 0.5 * box_h * scale_factor)
+    y2_new = min(image_h, box_y_center + 0.5 * box_h * scale_factor)
+    box = x1_new, y1_new, x2_new, y2_new
+    return box
+
+
+def resize2context(original_image, boxes, context, small_box_area, medium_box_area, context_crop_factor_small,
+                   context_crop_factor_medium):
+    context_boxes = []
+    for box in boxes:
+        image = original_image.copy()
+        x1, y1, x2, y2 = box
+        box_w = x2 - x1
+        box_h = y2 - y1
+        if (context == "small" and box_w * box_h <= small_box_area) or (
+                context == "medium" and box_w * box_h <= medium_box_area):
+            context_box = get_context_box(image, box, small_box_area, medium_box_area, context_crop_factor_small,
+                                          context_crop_factor_medium)
+        else:
+            context_box = box
+        context_boxes.append(context_box)
+
+    return context_boxes
+
+
 def preprocess_hash(segmentation_results, image_path: str, box, device,
                     fastsam_input_size=1024, clip_input_size=224):
     image = default_image_loader(image_path)
@@ -320,16 +367,53 @@ def preprocess_hash(segmentation_results, image_path: str, box, device,
             pred_mask = box2mask(image, box)
     mask = pred_mask
 
+    # Use context if object is too small
+
+    if config.features.context_clip != 'none':
+        clip_box = resize2context(image, [box], config.features.context_clip, config.features.small_box_area,
+                                  config.features.medium_box_area,
+                                  config.features.context_crop_factor_small, config.features.context_crop_factor_medium
+                                  )[0]
+    else:
+        clip_box = box
+
+    # clip_crops = []
+    # fastsam_crops = []
+    # mask_crops = []
+
     cropped_image = image.crop(box)
 
-    x1, y1, x2, y2 = map(int, box)
-    mask_crops = yolo_transform([mask[y1:y2, x1:x2]], fastsam_input_size,
-                                is_mask=True)  # .unsqueeze(0) #.type_as(model_params_type).to(device)
-    fastsam_crops = yolo_transform([cropped_image], fastsam_input_size)  # .type_as(model_params_type).to(device)
-    clip_crops = open_clip_image_transform(cropped_image, is_train=False, resize_longest_max=True,
-                                           image_size=clip_input_size)  # .type_as(model_params_type).to(device)
+    x1, y1, x2, y2 = map(round, box)
+    cropped_mask = mask.copy()
+    cropped_mask = cropped_mask[y1:y2, x1:x2]
+    fastsam_crop = yolo_transform([cropped_image], config.model.fastsam_input_size)
+    mask_crop = yolo_transform([np.expand_dims(cropped_mask, 2)], config.model.fastsam_input_size,
+                               is_mask=True)  # .unsqueeze(0)
 
-    return mask_crops[np.newaxis, np.newaxis, ...].astype(np.float32), fastsam_crops[np.newaxis, ...], clip_crops[np.newaxis, ...]
+    #
+    #
+    # x1, y1, x2, y2 = map(round, box) # int
+    # mask_crops = yolo_transform([mask[y1:y2, x1:x2]], fastsam_input_size,
+    #                             is_mask=True)  # .unsqueeze(0) #.type_as(model_params_type).to(device)
+    # fastsam_crops = yolo_transform([cropped_image], fastsam_input_size)  # .type_as(model_params_type).to(device)
+    #
+    #
+    # clip_crops = open_clip_image_transform(cropped_image, is_train=False, resize_longest_max=True,  image_size=clip_input_size)  # .type_as(model_params_type).to(device)
+
+    # Masking
+    x1, y1, x2, y2 = map(round, clip_box)  # TODO
+    box_w = x2 - x1
+    box_h = y2 - y1
+    if box_w * box_h > config.features.medium_box_area:
+        # x1, y1, x2, y2 = map(round, box)
+        cropped_mask = mask[y1:y2, x1:x2]
+        cropped_image = Image.fromarray(cropped_image * cropped_mask[..., np.newaxis].astype(np.uint8))
+
+    clip_crop = open_clip_image_transform(cropped_image, is_train=False, resize_longest_max=True,
+                                          image_size=config.model.clip_input_size) #.squeeze(0)
+
+    return mask_crop[np.newaxis, np.newaxis, ...].astype(np.float32), fastsam_crop[np.newaxis, ...], clip_crop[
+        np.newaxis, ...]
 
 
 def open_clip_image_transform(image, image_size, is_train=False, resize_longest_max=True, fill_color=0):

@@ -1,0 +1,56 @@
+model:
+  hash_size: 256 # 64
+  fastsam_model_weights: /data/segment-anything/FastSAM/weights/FastSAM-x.pt
+  fastsam_channels: 320
+  fastsam_output_size: 64
+  fastsam_input_size: 1024
+  clip_model: ViT-H-14 # ViT-B-32
+  clip_model_weights: laion2b_s32b_b79k # laion2b_s34b_b79k
+  clip_input_size: 224
+  clip_embedding_size: 1024  # 512
+  #use_masks: true
+  hash_method: tanh # tanh, bihash, greedy
+  mask_features_method: pool # pool, conv
+  fc_layer: false
+  fc_size: 1000
+
+features:
+  context_clip: medium # small, medium, all, none
+  context_crop_factor_small: 3
+  context_crop_factor_medium: 1
+  small_box_area: 1024
+  medium_box_area: 9216
+
+data:
+  val_datasets_path: ../datasets
+  label_path: /dataset/annotations
+  images_path: /dataset/images
+
+train:
+  masks_per_image: 32
+  num_workers: 6 # 3
+  num_epochs: 1
+  batch_factor: 1 # 2
+  batch_size: 6
+  log_steps: 32
+  ckpt_steps: 1000
+  top_k: 5
+  limit_batches: 50000
+  weight_decay: 0
+  lr: 0.00001
+  optimizer: "adamw" # "adam" or "sgd"
+
+val:
+  num_workers: 2
+  masks_per_image: 32
+  num_images: 1000
+  batch_size: 2
+  steps: 1000
+  retrieval_queries: 100
+  retrieval_db: 1000
+  temp_image_dir: ../temp_images/
+  save_images: false # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+vis:
+  num_queries: 20
+  num_retrievals: 10
+
