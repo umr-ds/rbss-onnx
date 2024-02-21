@@ -17,6 +17,7 @@ Build Docker image to run ONNX models
 
 ```
 cd docker
+git clone https://github.com/microsoft/onnxruntime.git
 docker build -t rbss/onnx:1.0 .
 cd ..
 ```

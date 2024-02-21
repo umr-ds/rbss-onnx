@@ -339,8 +339,7 @@ def resize2context(original_image, boxes, context, small_box_area, medium_box_ar
     return context_boxes
 
 
-def preprocess_hash(segmentation_results, image_path: str, box, device,
-                    fastsam_input_size=1024, clip_input_size=224):
+def preprocess_hash(segmentation_results, image_path: str, box, device):
     image = default_image_loader(image_path)
     fastsam_input_image = image.copy()
 
