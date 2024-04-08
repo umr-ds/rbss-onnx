@@ -1,4 +1,4 @@
-# Region-based Similarity Search ONNX 
+# Segmentation-based Similarity Search ONNX 
 
 ## Download models
 
